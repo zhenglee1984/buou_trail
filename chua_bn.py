@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 import ccxt
 import time
-import config
 import logging
 import requests
 import json
