@@ -4,7 +4,7 @@ import time
 import logging
 import requests
 import json
-import okx.Trade_api as TradeAPI
+import okx.TradingBot_api as TradingBot
 from logging.handlers import TimedRotatingFileHandler
 
 class MultiAssetTradingBot:
@@ -32,9 +32,9 @@ class MultiAssetTradingBot:
             # 'proxies': {'http': 'http://127.0.0.1:10100', 'https': 'http://127.0.0.1:10100'},
         })
         # 配置 OKX 第三方库
-        self.trading_bot = TradeAPI.TradeAPI(config["apiKey"], config["secret"], config["password"], False, '0')
+        self.trading_bot = TradingBot.TradingBotAPI(config["apiKey"], config["secret"], config["password"], False, '0')
         # 配置日志
-        log_file = "log/multi_asset_bot.log"
+        log_file = "log/ok_bot.log"
         logger = logging.getLogger(__name__)
         logger.setLevel(logging.INFO)
 
@@ -82,19 +82,60 @@ class MultiAssetTradingBot:
             self.logger.error(error_message)
             self.send_feishu_notification(error_message)
 
+    def fetch_signals(self):
+        try:
+
+            # 使用 `signalBotTrade` 模块获取信号数据
+            details = self.trading_bot.signal_orders_algo_pending(algoOrdType = "contract")
+            # 提取所有的 `algoId`
+            algo_ids = [item['algoId'] for item in details.get('data', [])]
+            return algo_ids
+
+        except Exception as e:
+            self.logger.error(f"Error fetching signals: {e}")
+            return []
+
     def fetch_positions(self):
         try:
-            positions = self.exchange.fetch_positions()
-            return positions
+            # 获取所有的 signalChanId
+            signal_ids = self.fetch_signals()  # 获取自己创建的信号
+            all_positions = []
+            for signal_id in signal_ids:
+                # 调用 OKX 信号策略接口获取每个信号策略的持仓数据
+                positions_data = self.exchange.privateGetTradingBotSignalPositions({
+                    'algoOrdType': 'contract',
+                    'algoId': signal_id
+                })
+
+                if positions_data['code'] != '0':
+                    self.logger.error(f"获取信号策略 {signal_id} 的持仓失败: {positions_data['msg']}")
+                    continue
+
+                for item in positions_data['data']:
+                    position = {
+                        'symbol': item['instId'].replace('-', '/'),
+                        'contracts': float(item['pos']),
+                        'entryPrice': float(item['avgPx']),
+                        'markPrice': float(item['markPx']),
+                        'side': 'long' if float(item['pos']) > 0 else 'short',
+                        'marginMode': item['mgnMode'],
+                        'algoId': signal_id  # 包含 `algoId` 方便平仓时使用
+                    }
+                    all_positions.append(position)
+
+            return all_positions
         except Exception as e:
             self.logger.error(f"Error fetching positions: {e}")
             return []
 
-    def close_position(self, symbol, amount, side, td_mode):
+    def close_position(self, symbol, amount, side, td_mode, algo_id):
         try:
             market_symbol = symbol.replace('/', '-').replace(':USDT', '-SWAP')
-            order = self.trading_bot.place_order(instId=market_symbol, tdMode=td_mode, side=side, ordType='market', sz=amount)
-            if order['code'] == '0' and order['data'][0]['sCode'] == '0':
+
+            # 使用带 algoId 的平仓方法
+            order = self.trading_bot.signal_close_position(instId=market_symbol, algoId=algo_id)
+            # 更新后的成功判断逻辑
+            if order['code'] == '0' and 'data' in order and order['data']:
                 self.logger.info(f"Closed position for {symbol} with size {amount}, side: {side}")
                 self.send_feishu_notification(f"Closed position for {symbol} with size {amount}, side: {side}")
                 self.detected_positions.discard(symbol)
@@ -109,6 +150,7 @@ class MultiAssetTradingBot:
             return False
 
     def monitor_positions(self):
+
         positions = self.fetch_positions()
         current_symbols = set(position['symbol'] for position in positions if float(position['contracts']) != 0)
 
@@ -125,6 +167,7 @@ class MultiAssetTradingBot:
             current_price = float(position['markPrice'])
             side = position['side']
             td_mode = position['marginMode']
+            algo_id = position['algoId']  # 获取 algoId
 
             if position_amt == 0:
                 continue
@@ -175,7 +218,7 @@ class MultiAssetTradingBot:
                 self.logger.info(f"回撤到{self.low_trail_stop_loss_pct:.2f}% 止盈")
                 if profit_pct <= self.low_trail_stop_loss_pct:
                     self.logger.info(f"{symbol} 触发低档保护止盈，当前盈亏回撤到: {profit_pct:.2f}%，执行平仓")
-                    self.close_position(symbol, abs(position_amt), 'sell' if side == 'long' else 'buy', td_mode)
+                    self.close_position(symbol, abs(position_amt), 'sell' if side == 'long' else 'buy', td_mode, algo_id)
                     continue
 
             elif current_tier == "第一档移动止盈":
@@ -184,7 +227,7 @@ class MultiAssetTradingBot:
                 if profit_pct <= trail_stop_loss:
                     self.logger.info(
                         f"{symbol} 达到利润回撤阈值，当前档位：第一档移动止盈，最高盈亏: {highest_profit:.2f}%，当前盈亏: {profit_pct:.2f}%，执行平仓")
-                    self.close_position(symbol, abs(position_amt), 'sell' if side == 'long' else 'buy', td_mode)
+                    self.close_position(symbol, abs(position_amt), 'sell' if side == 'long' else 'buy', td_mode, algo_id)
                     continue
 
             elif current_tier == "第二档移动止盈":
@@ -193,12 +236,12 @@ class MultiAssetTradingBot:
                 if profit_pct <= trail_stop_loss:
                     self.logger.info(
                         f"{symbol} 达到利润回撤阈值，当前档位：第二档移动止盈，最高盈亏: {highest_profit:.2f}%，当前盈亏: {profit_pct:.2f}%，执行平仓")
-                    self.close_position(symbol, abs(position_amt), 'sell' if side == 'long' else 'buy', td_mode)
+                    self.close_position(symbol, abs(position_amt), 'sell' if side == 'long' else 'buy', td_mode, algo_id)
                     continue
 
             if profit_pct <= -self.stop_loss_pct:
                 self.logger.info(f"{symbol} 触发止损，当前盈亏: {profit_pct:.2f}%，执行平仓")
-                self.close_position(symbol, abs(position_amt), 'sell' if side == 'long' else 'buy', td_mode)
+                self.close_position(symbol, abs(position_amt), 'sell' if side == 'long' else 'buy', td_mode, algo_id)
 
 
 if __name__ == '__main__':
