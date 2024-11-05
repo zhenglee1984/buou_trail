@@ -4,7 +4,7 @@ import time
 import logging
 import requests
 import json
-
+from logging.handlers import TimedRotatingFileHandler
 
 class MultiAssetTradingBot:
     def __init__(self, config, feishu_webhook=None, monitor_interval=4):
@@ -36,7 +36,9 @@ class MultiAssetTradingBot:
         logger = logging.getLogger(__name__)
         logger.setLevel(logging.INFO)
 
-        file_handler = logging.FileHandler(log_file)
+        # 使用 TimedRotatingFileHandler 以天为单位进行日志分割
+        file_handler = TimedRotatingFileHandler(log_file, when='midnight', interval=1, backupCount=7, encoding='utf-8')
+        file_handler.suffix = "%Y-%m-%d"  # 设置日志文件名的后缀格式，例如 multi_asset_bot.log.2024-11-05
         formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
         file_handler.setFormatter(formatter)
         logger.addHandler(file_handler)
