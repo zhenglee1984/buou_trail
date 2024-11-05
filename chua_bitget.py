@@ -73,12 +73,13 @@ class MultiAssetTradingBot:
             # 设置为双向持仓模式
             account_info = self.exchange.set_position_mode(hedged=True)
 
-            # 获取 dualSidePosition 字段的值
+            # 获取 posMode 字段的值
             self.logger.info(f"程序启动，更改持仓模式为双向持仓")
             self.send_feishu_notification(f"程序启动，更改持仓模式为双向持仓")
-            dual_side_position = account_info.get('data', {}).get('dualSidePosition', None)
-            # 如果 dual_side_position 为 True，则表示为双向持仓模式
-            return dual_side_position is True
+            pos_mode = account_info.get('data', {}).get('posMode', None)
+
+            # 如果 pos_mode 为 'single_mode'，则表示为单向持仓模式
+            return pos_mode == 'hedge_mode'
         except Exception as e:
             self.logger.error(f"获取账户信息时出错: {e}")
             return False
