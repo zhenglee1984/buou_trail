@@ -4,7 +4,7 @@
 本工具极大提高了胜率，特别是管住你的双手，纪律性拉满。
 
 
-注意CCXT版本，建议requirements.txt安装
+注意CCXT版本不一致大概率会导致bug，建议requirements.txt安装
 
 币安跟OK交易所设置**单向持仓**
 bitget交易所设置**双向持仓**
