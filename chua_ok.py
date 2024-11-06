@@ -150,6 +150,7 @@ class MultiAssetTradingBot:
 
         for position in positions:
             symbol = position['symbol']
+            # print(position)
             position_amt = float(position['contracts'])
             entry_price = float(position['entryPrice'])
             current_price = float(position['markPrice'])
@@ -174,21 +175,14 @@ class MultiAssetTradingBot:
                 self.send_feishu_notification(
                     f"首次检测到仓位：{symbol}, 仓位数量: {position_amt}, 开仓价格: {entry_price}, 方向: {side}")
 
-            if self.position_mode == 'long_short_mode':  # 双向持仓模式
-                if side == 'long':
-                    profit_pct = (current_price - entry_price) / entry_price * 100
-                elif side == 'short':
-                    profit_pct = (entry_price - current_price) / entry_price * 100
-                else:
-                    continue
-            else:  # 单向持仓模式 (net_mode)
-                # 假设在单向持仓模式下，只计算总净头寸的盈亏
-                if position_amt > 0:  # 多头净头寸
-                    profit_pct = (current_price - entry_price) / entry_price * 100
-                    side = 'long'
-                else:  # 空头净头寸
-                    profit_pct = (entry_price - current_price) / entry_price * 100
-                    side = 'short'
+            # 计算盈亏
+            if side == 'long':
+                profit_pct = (current_price - entry_price) / entry_price * 100
+            elif side == 'short':
+                profit_pct = (entry_price - current_price) / entry_price * 100
+            else:
+                continue
+
 
             highest_profit = self.highest_profits.get(symbol, 0)
             if profit_pct > highest_profit:
