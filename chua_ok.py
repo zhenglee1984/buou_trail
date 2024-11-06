@@ -21,6 +21,7 @@ class MultiAssetTradingBot:
         self.blacklist = set(config.get("blacklist", []))
         self.monitor_interval = monitor_interval  # 从配置文件读取的监控循环时间
 
+
         # 配置交易所
         self.exchange = ccxt.okx({
             'apiKey': config["apiKey"],
@@ -34,7 +35,7 @@ class MultiAssetTradingBot:
         # 配置 OKX 第三方库
         self.trading_bot = TradeAPI.TradeAPI(config["apiKey"], config["secret"], config["password"], False, '0')
         # 配置日志
-        log_file = "log/multi_asset_bot.log"
+        log_file = "log/okx.log"
         logger = logging.getLogger(__name__)
         logger.setLevel(logging.INFO)
 
@@ -55,6 +56,25 @@ class MultiAssetTradingBot:
         self.highest_profits = {}
         self.current_tiers = {}
         self.detected_positions = set()
+        # 获取持仓模式
+        self.position_mode = self.get_position_mode()
+
+    def get_position_mode(self):
+        try:
+            # 假设该端点用于获取账户持仓模式
+            response = self.exchange.private_get_account_config()
+            data = response.get('data', [])
+            if data and isinstance(data, list):
+                # 取列表的第一个元素（假设它是一个字典），然后获取 'posMode'
+                position_mode = data[0].get('posMode', 'single')  # 默认值为单向
+                self.logger.info(f"当前持仓模式: {position_mode}")
+                return position_mode
+            else:
+                self.logger.error("无法检测持仓模式: 'data' 字段为空或格式不正确")
+                return 'single'  # 返回默认值
+        except Exception as e:
+            self.logger.error(f"无法检测持仓模式: {e}")
+            return None
 
     def send_feishu_notification(self, message):
         if self.feishu_webhook:
@@ -93,9 +113,19 @@ class MultiAssetTradingBot:
     def close_position(self, symbol, amount, side, td_mode):
         try:
             market_symbol = symbol.replace('/', '-').replace(':USDT', '-SWAP')
-            order = self.trading_bot.place_order(instId=market_symbol, tdMode=td_mode, side=side, ordType='market', sz=amount)
-            if order['code'] == '0' and order['data'][0]['sCode'] == '0':
-                self.logger.info(f"Closed position for {symbol} with size {amount}, side: {side}")
+
+            # 根据 position_mode 选择平仓方向
+            if self.position_mode == 'long_short_mode':
+                # 在双向持仓模式下，确保指定平仓方向  posSide 指定方向
+                pos_side = 'long' if side == 'long' else 'short'
+            else:
+                # 在 net_mode 模式下，不区分方向，系统会自动平仓
+                pos_side = 'net'
+
+            order = self.trading_bot.close_positions(instId=market_symbol, mgnMode=td_mode, posSide=pos_side)
+
+            if order['code'] == '0':
+                self.logger.info(f"Closed position for {symbol} with size {amount}, side: {pos_side}")
                 self.send_feishu_notification(f"Closed position for {symbol} with size {amount}, side: {side}")
                 self.detected_positions.discard(symbol)
                 self.highest_profits.pop(symbol, None)
@@ -144,12 +174,21 @@ class MultiAssetTradingBot:
                 self.send_feishu_notification(
                     f"首次检测到仓位：{symbol}, 仓位数量: {position_amt}, 开仓价格: {entry_price}, 方向: {side}")
 
-            if side == 'long':
-                profit_pct = (current_price - entry_price) / entry_price * 100
-            elif side == 'short':
-                profit_pct = (entry_price - current_price) / entry_price * 100
-            else:
-                continue
+            if self.position_mode == 'long_short_mode':  # 双向持仓模式
+                if side == 'long':
+                    profit_pct = (current_price - entry_price) / entry_price * 100
+                elif side == 'short':
+                    profit_pct = (entry_price - current_price) / entry_price * 100
+                else:
+                    continue
+            else:  # 单向持仓模式 (net_mode)
+                # 假设在单向持仓模式下，只计算总净头寸的盈亏
+                if position_amt > 0:  # 多头净头寸
+                    profit_pct = (current_price - entry_price) / entry_price * 100
+                    side = 'long'
+                else:  # 空头净头寸
+                    profit_pct = (entry_price - current_price) / entry_price * 100
+                    side = 'short'
 
             highest_profit = self.highest_profits.get(symbol, 0)
             if profit_pct > highest_profit:
@@ -175,7 +214,7 @@ class MultiAssetTradingBot:
                 self.logger.info(f"回撤到{self.low_trail_stop_loss_pct:.2f}% 止盈")
                 if profit_pct <= self.low_trail_stop_loss_pct:
                     self.logger.info(f"{symbol} 触发低档保护止盈，当前盈亏回撤到: {profit_pct:.2f}%，执行平仓")
-                    self.close_position(symbol, abs(position_amt), 'sell' if side == 'long' else 'buy', td_mode)
+                    self.close_position(symbol, abs(position_amt), side, td_mode)
                     continue
 
             elif current_tier == "第一档移动止盈":
@@ -184,7 +223,7 @@ class MultiAssetTradingBot:
                 if profit_pct <= trail_stop_loss:
                     self.logger.info(
                         f"{symbol} 达到利润回撤阈值，当前档位：第一档移动止盈，最高盈亏: {highest_profit:.2f}%，当前盈亏: {profit_pct:.2f}%，执行平仓")
-                    self.close_position(symbol, abs(position_amt), 'sell' if side == 'long' else 'buy', td_mode)
+                    self.close_position(symbol, abs(position_amt), side, td_mode)
                     continue
 
             elif current_tier == "第二档移动止盈":
@@ -193,12 +232,12 @@ class MultiAssetTradingBot:
                 if profit_pct <= trail_stop_loss:
                     self.logger.info(
                         f"{symbol} 达到利润回撤阈值，当前档位：第二档移动止盈，最高盈亏: {highest_profit:.2f}%，当前盈亏: {profit_pct:.2f}%，执行平仓")
-                    self.close_position(symbol, abs(position_amt), 'sell' if side == 'long' else 'buy', td_mode)
+                    self.close_position(symbol, abs(position_amt), side, td_mode)
                     continue
 
             if profit_pct <= -self.stop_loss_pct:
                 self.logger.info(f"{symbol} 触发止损，当前盈亏: {profit_pct:.2f}%，执行平仓")
-                self.close_position(symbol, abs(position_amt), 'sell' if side == 'long' else 'buy', td_mode)
+                self.close_position(symbol, abs(position_amt), side, td_mode)
 
 
 if __name__ == '__main__':

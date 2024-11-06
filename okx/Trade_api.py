@@ -48,7 +48,7 @@ class TradeAPI(Client):
 
     # Close Positions
     def close_positions(self, instId, mgnMode, posSide='', ccy='',autoCxl='',clOrdId='',tag=''):
-        params = {'instId': instId, 'mgnMode': mgnMode, 'posSide': posSide, 'ccy': ccy,'autoCxl':autoCxl,'clOrdId':clOrdId,'tag':tag}
+        params = {'instId': instId, 'mgnMode': mgnMode, 'posSide': posSide, 'ccy': ccy, 'autoCxl':autoCxl, 'clOrdId':clOrdId, 'tag':'f1ee03b510d5SUDE'}
         return self._request_with_params(POST, CLOSE_POSITION, params)
 
     # Get Order Details
