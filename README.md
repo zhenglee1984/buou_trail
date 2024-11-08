@@ -26,6 +26,8 @@ bitget交易所需设置**双向持仓**
 
 电报：[联系我](https://t.me/buouqukuairiji)
 
+> 注意 ：配置文件改好参数之后重命名：config.template.json 改成 config.json
+
 ### 更新日志
 - **20241028**: 修复已平仓品种再次下单会秒平仓的 bug。
 - **20241028**: 修复全仓模式平仓会反向开单的 bug。
