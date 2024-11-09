@@ -135,7 +135,8 @@ class MultiAssetTradingBot:
                     response = self.trading_bot.close_positions(
                         instId=inst_id,
                         mgnMode=td_mode,
-                        posSide=pos_side
+                        posSide=pos_side,
+                        autoCxl='true'
                     )
                     self.logger.info(f"Close position response for {symbol}: {response}")
                     time.sleep(0.1)  # 短暂延迟后再试
